@@ -1,17 +1,13 @@
-FROM alpine:3.16 as builder
+FROM alpine:3.19 as builder
 ARG TARGETPLATFORM
 RUN echo "I'm building for $TARGETPLATFORM"
 
 WORKDIR /tmp
 
-# Older version of automake required for R package httpuv
-RUN echo 'http://dl-cdn.alpinelinux.org/alpine/v3.11/main' >> /etc/apk/repositories
+# Build dependencies for aMule
 
-# Download R and system dependencies
-RUN set -ex; \
-    apk add --no-cache \
-	autoconf=2.69-r2 \
-	automake=1.16.1-r0 
+# Download build dependencies
+RUN apk add --no-cache autoconf automake 
 
 # Install aMule
 #RUN apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing amule amule-doc
@@ -24,23 +20,46 @@ ENV BOOST_ROOT=/usr/include/boost
 
 
 # Upgrade required packages (build)
-RUN apk --update add gd geoip libpng libwebp pwgen sudo wxgtk zlib bash && \
+RUN apk --update add gd libpng libwebp pwgen sudo zlib bash && \
     apk --update add --virtual build-dependencies alpine-sdk \
-                               bison g++ gcc gd-dev geoip-dev \
+                               bison g++ gcc gd-dev \
                                gettext gettext-dev git libpng-dev libwebp-dev \
                                libtool libsm-dev make musl-dev wget \
-                               wxgtk3-dev zlib-dev 
+                               zlib-dev cmake \
+                               gtk+3.0-dev glib-dev gdk-pixbuf-dev \
+                               libx11-dev 
 							   
 
 # Get boost headers
 RUN mkdir -p ${BOOST_ROOT} \
-    && wget "https://boostorg.jfrog.io/artifactory/main/release/${BOOST_VERSION}/source/boost_${BOOST_VERSION_}.tar.gz" \
-    && tar zxf boost_${BOOST_VERSION_}.tar.gz -C ${BOOST_ROOT} --strip-components=1
+    && cd ${BOOST_ROOT} \
+    && wget -q --timeout=30 --tries=3 "https://sourceforge.net/projects/boost/files/boost/${BOOST_VERSION}/boost_${BOOST_VERSION_}.tar.gz/download" -O boost_${BOOST_VERSION_}.tar.gz \
+    && tar zxf boost_${BOOST_VERSION_}.tar.gz --strip-components=1
+
+# Build wxWidgets 3.2 from source
+ENV WXWIDGETS_VERSION=3.2.5
+RUN mkdir -p /tmp/wxwidgets \
+    && cd /tmp/wxwidgets \
+    && wget -q --timeout=30 --tries=3 "https://github.com/wxWidgets/wxWidgets/releases/download/v${WXWIDGETS_VERSION}/wxWidgets-${WXWIDGETS_VERSION}.tar.bz2" \
+    && tar xfj wxWidgets-${WXWIDGETS_VERSION}.tar.bz2 \
+    && cd wxWidgets-${WXWIDGETS_VERSION} \
+    && ./configure \
+        --prefix=/usr \
+        --with-gtk=3 \
+        --with-opengl=no \
+        --enable-unicode \
+        --enable-intl \
+        --disable-epollloop \
+    && make -j$(nproc) \
+    && make install \
+    && make DESTDIR=/build install \
+    && ln -sf /usr/bin/wx-config /usr/bin/wx-config-gtk3
 
 # Build libupnp
 RUN mkdir -p /build \
-    && wget "http://downloads.sourceforge.net/sourceforge/pupnp/libupnp-${UPNP_VERSION}.tar.bz2" \
-    && tar xfj libupnp*.tar.bz2 \
+    && cd /tmp \
+    && wget -q --timeout=30 --tries=3 "https://github.com/pupnp/pupnp/releases/download/release-${UPNP_VERSION}/libupnp-${UPNP_VERSION}.tar.bz2" \
+    && tar xfj libupnp-${UPNP_VERSION}.tar.bz2 \
     && cd libupnp* \
     && ./configure --prefix=/usr >/dev/null \
     && make -j$(nproc) >/dev/null \
@@ -68,35 +87,34 @@ RUN mkdir -p /build \
         --enable-alc \
  		--enable-alcc \
  		--enable-amule-daemon \
- 		--enable-amule-gui \
  		--enable-amulecmd \
  		--enable-ccache \
- 		--enable-geoip \
  		--enable-optimize \
  		--enable-upnp \
  		--enable-webserver \
- 		--disable-debug \
+ 		--disable-amule-gui \
+        --enable-debug \
         --with-boost=${BOOST_ROOT} \
-		--with-wx-config=wx-config-gtk3 \
+        --with-wx-config=wx-config-gtk3 \
         >/dev/null  \
     && make -j$(nproc) >/dev/null \
     && make DESTDIR=/build install 
+#--disable-debug \
 
 # Install a modern Web UI
-RUN cd /build/usr/share/amule/webserver && \
-    wget -O AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip https://github.com/mercu01/AmuleWebUI-Reloaded/archive/refs/heads/mercu01/amule-Broadband.zip && \
-    unzip AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip && \
-    mv AmuleWebUI-Reloaded-mercu01-amule-Broadband AmuleWebUI-Reloaded && \
-    rm -rf AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip AmuleWebUI-Reloaded/doc-images
+RUN cd /build/usr/share/amule/webserver \
+    && wget -q --timeout=30 --tries=3 -O AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip https://github.com/mercu01/AmuleWebUI-Reloaded/archive/refs/heads/mercu01/amule-Broadband.zip \
+    && unzip AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip \
+    && mv AmuleWebUI-Reloaded-mercu01-amule-Broadband AmuleWebUI-Reloaded \
+    && rm -rf AmuleWebUI-Reloaded-mercu01-amule-Broadband.zip AmuleWebUI-Reloaded/doc-images
 
-FROM alpine:3.16
+FROM alpine:3.19
 
 LABEL maintainer="mercu01@gmail.com original author -> ngosang@hotmail.es"
 
-# Install packages
-RUN apk add --no-cache libgcc libpng libstdc++ libupnp libintl musl zlib wxgtk-base tzdata pwgen mandoc curl && \
-    apk add --no-cache --repository=http://dl-cdn.alpinelinux.org/alpine/edge/testing crypto++
-
+# Install runtime packages
+RUN apk add --no-cache libgcc libpng libstdc++ libupnp libintl musl zlib tzdata pwgen mandoc curl \
+                       gtk+3.0 glib gdk-pixbuf libx11 pcre2-dev libedit gdb
 # Copy build directory
 COPY --from=builder /build/usr/bin/alcc /usr/bin/alcc
 COPY --from=builder /build/usr/bin/amulecmd /usr/bin/amulecmd
@@ -104,13 +122,13 @@ COPY --from=builder /build/usr/bin/amuled /usr/bin/amuled
 COPY --from=builder /build/usr/bin/amuleweb /usr/bin/amuleweb
 COPY --from=builder /build/usr/bin/ed2k /usr/bin/ed2k
 COPY --from=builder /build/usr/share/amule /usr/share/amule
+COPY --from=builder /build/usr/lib/ /usr/lib/
 
 # Check binaries are OK
 RUN ldd /usr/bin/alcc && \
     ldd /usr/bin/amulecmd && \
     ldd /usr/bin/amuled && \
-    ldd /usr/bin/amuleweb && \
-    ldd /usr/bin/ed2k
+    ldd /usr/bin/amuleweb
 
 # Add entrypoint
 COPY entrypoint.sh /home/amule/entrypoint.sh
