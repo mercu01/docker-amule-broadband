@@ -49,6 +49,7 @@ RUN mkdir -p /tmp/wxwidgets \
         --with-opengl=no \
         --enable-unicode \
         --enable-intl \
+        --disable-epollloop \
     && make -j$(nproc) \
     && make install \
     && make DESTDIR=/build install \
@@ -92,12 +93,13 @@ RUN mkdir -p /build \
  		--enable-upnp \
  		--enable-webserver \
  		--disable-amule-gui \
- 		--disable-debug \
+        --enable-debug \
         --with-boost=${BOOST_ROOT} \
         --with-wx-config=wx-config-gtk3 \
         >/dev/null  \
     && make -j$(nproc) >/dev/null \
     && make DESTDIR=/build install 
+#--disable-debug \
 
 # Install a modern Web UI
 RUN cd /build/usr/share/amule/webserver \
@@ -112,7 +114,7 @@ LABEL maintainer="mercu01@gmail.com original author -> ngosang@hotmail.es"
 
 # Install runtime packages
 RUN apk add --no-cache libgcc libpng libstdc++ libupnp libintl musl zlib tzdata pwgen mandoc curl \
-                       gtk+3.0 glib gdk-pixbuf libx11 pcre2-dev libedit
+                       gtk+3.0 glib gdk-pixbuf libx11 pcre2-dev libedit gdb
 # Copy build directory
 COPY --from=builder /build/usr/bin/alcc /usr/bin/alcc
 COPY --from=builder /build/usr/bin/amulecmd /usr/bin/amulecmd
